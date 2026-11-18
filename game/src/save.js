@@ -1,12 +1,21 @@
 // Crimson Harbor — save / load (localStorage). One save slot.
-import { SAVE_KEY, CHARACTERS } from './data.js';
+import { SAVE_KEY } from './data.js';
 
 export function defaultSave() {
   return {
-    hasSave: false, chapter: 1, cash: 500, day: 1, hour: 18.0,
-    respect: 0, respectLevel: 1, collectibles: [], properties: [],
-    charIndex: 0, weapons: [true, true, false, false, false],
-    carIndex: 0, settings: { sfx: true, shake: true, showFps: false },
+    hasSave: false,
+    chapter: 1,
+    cash: 500,
+    day: 1,
+    hour: 18.0,
+    respect: 0,
+    respectLevel: 1,
+    collectibles: [],
+    properties: [],
+    charIndex: 0,
+    weapons: [true, true, false, false, false],
+    carIndex: 0,
+    settings: { sfx: true, shake: true, showFps: false },
   };
 }
 export function loadSave() {
@@ -15,7 +24,9 @@ export function loadSave() {
     if (!raw) return defaultSave();
     const s = JSON.parse(raw);
     return Object.assign(defaultSave(), s, { hasSave: true });
-  } catch (e) { return defaultSave(); }
+  } catch (e) {
+    return defaultSave();
+  }
 }
 export function writeSave(s) {
   try {
@@ -24,8 +35,11 @@ export function writeSave(s) {
   } catch (e) {}
 }
 export function clearSave() {
-  try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+  try {
+    localStorage.removeItem(SAVE_KEY);
+  } catch (e) {}
 }
+const LEVEL_NAMES = ['STREET', 'KNOWN', 'FEARED', 'LEGEND', 'KINGPIN'];
 export function respectLevelName(lvl) {
-  return ['STREET', 'KNOWN', 'FEARED', 'LEGEND', 'KINGPIN'][Math.min(lvl - 1, 4)];
+  return LEVEL_NAMES[Math.min(lvl - 1, LEVEL_NAMES.length - 1)];
 }

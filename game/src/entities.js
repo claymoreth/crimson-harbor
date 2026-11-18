@@ -1,5 +1,6 @@
-// Crimson Harbor — entities: player (foot + car), traffic, pedestrians, police,
-// gang enemies, bosses, bullets, particles. All systems the HUD shows read from here.
+// Crimson Harbor — entities: the player (foot + car), traffic, pedestrians,
+// police, gang enemies and bosses, bullets, particles. Everything the HUD
+// shows reads from here.
 import { WORLD_W, WORLD_H, ROAD_STEP, WEAPONS, CARS, POLICE_NAMES, GANGS, BOSSES } from './data.js';
 import { clamp, dist, angTo, angDiff, TAU } from './util.js';
 import { moveCircle, isWater, onRoad, lineBlocked } from './world.js';
@@ -11,24 +12,34 @@ export const floaters = []; // floating "+$800" / damage texts
 
 export function makePlayer(x, y, charIndex) {
   return {
-    x, y, angle: -Math.PI / 2, hp: 100, maxHp: 100, inCar: false, car: null,
-    speed: 0, charIndex, weapon: 1, ammo: {}, reserve: {},
+    x, y,
+    angle: -Math.PI / 2,
+    hp: 100, maxHp: 100,
+    inCar: false, car: null,
+    speed: 0, charIndex,
+    weapon: 1, ammo: {}, reserve: {},
     fireCd: 0, reloadCd: 0, sprint: false, dead: false, bustT: 0,
   };
 }
 export function giveWeapons(p, owned) {
   WEAPONS.forEach((w, i) => {
-    if (owned[i]) { p.ammo[i] = w.ammo; p.reserve[i] = w.reserve; }
+    if (owned[i]) {
+      p.ammo[i] = w.ammo;
+      p.reserve[i] = w.reserve;
+    }
   });
   if (!owned[p.weapon]) p.weapon = 1;
 }
 export function makeCar(x, y, angle, def, isPolice = false, name = '') {
   return {
-    x, y, angle, speed: 0, cond: 100, def, isPolice, name,
+    x, y, angle,
+    speed: 0, cond: 100,
+    def, isPolice, name,
     steer: 0, smoke: 0, brakeLight: false, siren: isPolice, dead: false,
     target: null, ramCd: 0, stuckT: 0,
   };
 }
+
 // --- car physics (arcade, top-down) ----------------------------------------
 export function driveCar(car, input, dt, topMul = 1) {
   const top = 520 * topMul * (car.def.top || 1);
@@ -44,7 +55,13 @@ export function driveCar(car, input, dt, topMul = 1) {
   car.angle += steerAmt * 2.6 * drift * (Math.min(Math.abs(car.speed), 300) / 300) * dir * dt;
   if (input.drift && Math.abs(car.speed) > 200) {
     car.speed *= (1 - 0.4 * dt);
-    if (Math.random() < 0.5) particles.push({ x: car.x - Math.cos(car.angle) * 18, y: car.y - Math.sin(car.angle) * 18, vx: (Math.random() - 0.5) * 30, vy: (Math.random() - 0.5) * 30, life: 0.5, max: 0.5, color: 'rgba(200,200,200,0.5)', size: 5 });
+    if (Math.random() < 0.5) {
+      particles.push({
+        x: car.x - Math.cos(car.angle) * 18, y: car.y - Math.sin(car.angle) * 18,
+        vx: (Math.random() - 0.5) * 30, vy: (Math.random() - 0.5) * 30,
+        life: 0.5, max: 0.5, color: 'rgba(200,200,200,0.5)', size: 5,
+      });
+    }
   }
   const nx = car.x + Math.cos(car.angle) * car.speed * dt;
   const ny = car.y + Math.sin(car.angle) * car.speed * dt;
@@ -53,22 +70,35 @@ export function driveCar(car, input, dt, topMul = 1) {
   const moved = dist(before.x, before.y, car.x, car.y);
   const expected = Math.abs(car.speed) * dt;
   if (expected > 4 && moved < expected * 0.25) {
-    // hit something: scrape speed + damage + sparks
+    // Hit something: scrape speed + damage + sparks.
     if (Math.abs(car.speed) > 120) {
       car.cond = Math.max(0, car.cond - Math.abs(car.speed) * 0.02);
       car.speed *= 0.35;
       sfx.crash();
-      for (let i = 0; i < 8; i++) particles.push({ x: car.x, y: car.y, vx: (Math.random() - 0.5) * 160, vy: (Math.random() - 0.5) * 160, life: 0.4, max: 0.4, color: '#ffd24b', size: 3 });
+      for (let i = 0; i < 8; i++) {
+        particles.push({
+          x: car.x, y: car.y,
+          vx: (Math.random() - 0.5) * 160, vy: (Math.random() - 0.5) * 160,
+          life: 0.4, max: 0.4, color: '#ffd24b', size: 3,
+        });
+      }
       if (car.isPolice) car.speed = 0;
-    } else car.speed *= 0.6;
+    } else {
+      car.speed *= 0.6;
+    }
   }
   car.brakeLight = !!input.down;
   if (car.cond < 35) car.smoke += dt;
   if (car.smoke > 0.15) {
     car.smoke = 0;
-    particles.push({ x: car.x, y: car.y - 8, vx: (Math.random() - 0.5) * 20, vy: -30 - Math.random() * 20, life: 0.9, max: 0.9, color: 'rgba(80,80,80,0.6)', size: 7 });
+    particles.push({
+      x: car.x, y: car.y - 8,
+      vx: (Math.random() - 0.5) * 20, vy: -30 - Math.random() * 20,
+      life: 0.9, max: 0.9, color: 'rgba(80,80,80,0.6)', size: 7,
+    });
   }
 }
+
 // --- traffic ----------------------------------------------------------------
 export function makeTraffic(n) {
   const list = [];
@@ -84,39 +114,45 @@ export function makeTraffic(n) {
   return list;
 }
 function pickRoadPoint(x, y) {
-  const vertical = Math.random() > 0.5;
-  if (vertical) return { x: 150 + Math.floor(Math.random() * 11) * ROAD_STEP, y };
+  if (Math.random() > 0.5) return { x: 150 + Math.floor(Math.random() * 11) * ROAD_STEP, y };
   return { x, y: 150 + Math.floor(Math.random() * 8) * ROAD_STEP };
 }
 export function updateTraffic(list, dt, player) {
   for (const c of list) {
     if (!c.target) c.target = pickRoadPoint(c.x, c.y);
     const d = dist(c.x, c.y, c.target.x, c.target.y);
-    if (d < 40) { c.target = pickRoadPoint(c.x, c.y); continue; }
+    if (d < 40) {
+      c.target = pickRoadPoint(c.x, c.y);
+      continue;
+    }
     const want = angTo(c.x, c.y, c.target.x, c.target.y);
     const diff = angDiff(c.angle, want);
     const input = { up: true, down: false, left: diff > 0.12, right: diff < -0.12, drift: false };
-    // slow down for the player / other cars ahead
+    // Slow down for the player / other cars ahead.
     const ahead = dist(c.x + Math.cos(c.angle) * 70, c.y + Math.sin(c.angle) * 70, player.x, player.y);
     if (ahead < 60) input.up = false;
     driveCar(c, input, dt, 0.55);
-    // keep traffic on roads: if pushed off, nudge back
+    // Keep traffic on roads: if pushed off, nudge back.
     if (!onRoad(c.x, c.y) && Math.random() < 0.02) c.target = pickRoadPoint(c.x, c.y);
   }
 }
+
 // --- pedestrians -------------------------------------------------------------
 export function makePeds(n) {
   const list = [];
+  const shirtColors = ['#e8b04b', '#5aa8e8', '#e86aa8', '#7ddb8a', '#e8e8e8'];
   for (let i = 0; i < n; i++) {
-    // spawn on sidewalks beside a road, never inside a building
+    // Spawn on sidewalks beside a road, never inside a building.
     const vertical = Math.random() > 0.5;
     const x = vertical ? 150 + Math.floor(Math.random() * 11) * ROAD_STEP + (Math.random() - 0.5) * 70 : 200 + Math.random() * 3000;
     const y = vertical ? 200 + Math.random() * 2000 : 150 + Math.floor(Math.random() * 8) * ROAD_STEP + (Math.random() - 0.5) * 70;
     list.push({
       x, y,
-      angle: Math.random() * TAU, speed: 22 + Math.random() * 18,
-      color: ['#e8b04b', '#5aa8e8', '#e86aa8', '#7ddb8a', '#e8e8e8'][i % 5],
-      panic: 0, wanderT: 1 + Math.random() * 3,
+      angle: Math.random() * TAU,
+      speed: 22 + Math.random() * 18,
+      color: shirtColors[i % shirtColors.length],
+      panic: 0,
+      wanderT: 1 + Math.random() * 3,
     });
   }
   return list;
@@ -138,6 +174,7 @@ export function updatePeds(list, dt, player, danger) {
     }
   }
 }
+
 // --- police ------------------------------------------------------------------
 export function makePolice(n, player, startIdx = 0) {
   const list = [];
@@ -153,19 +190,21 @@ export function makePolice(n, player, startIdx = 0) {
 }
 export function updatePolice(list, dt, game) {
   const p = game.player;
-  const px = p.inCar ? p.car.x : p.x, py = p.inCar ? p.car.y : p.y;
+  const px = p.inCar ? p.car.x : p.x;
+  const py = p.inCar ? p.car.y : p.y;
   for (const c of list) {
     const d = dist(c.x, c.y, px, py);
     c.dist = d;
-    // mode: RAMMING when close, ROADBLOCK when far and ahead, else PURSUIT
+    // Mode: RAMMING when close, ROADBLOCK when far and ahead, else PURSUIT.
     if (d < 130) c.mode = 'RAMMING';
     else if (d > 520 && Math.random() < 0.002) c.mode = 'ROADBLOCK';
     else if (c.mode === 'ROADBLOCK' && d < 260) c.mode = 'PURSUIT';
     else if (c.mode !== 'ROADBLOCK') c.mode = 'PURSUIT';
     let input;
     if (c.mode === 'ROADBLOCK') {
-      // park ahead of the player, across the road
-      const tx = px + Math.cos(p.angle || 0) * 260, ty = py + Math.sin(p.angle || 0) * 260;
+      // Park ahead of the player, across the road.
+      const tx = px + Math.cos(p.angle || 0) * 260;
+      const ty = py + Math.sin(p.angle || 0) * 260;
       const want = angTo(c.x, c.y, tx, ty);
       const diff = angDiff(c.angle, want);
       input = { up: d > 60, down: false, left: diff > 0.15, right: diff < -0.15, drift: false };
@@ -177,7 +216,7 @@ export function updatePolice(list, dt, game) {
     }
     const topMul = game.wanted >= 4 ? 1.06 : game.wanted >= 3 ? 1.0 : 0.94;
     driveCar(c, input, dt, topMul);
-    // ram: when touching the player's car, damage + shove
+    // Ram: when touching the player's car, damage + shove.
     if (p.inCar && d < 52 && c.ramCd <= 0) {
       c.ramCd = 0.8;
       p.car.cond = Math.max(0, p.car.cond - 6);
@@ -188,13 +227,16 @@ export function updatePolice(list, dt, game) {
       game.shake = 0.35;
     }
     c.ramCd -= dt;
-    // busted: on foot, police touch the player for a while
+    // Busted: on foot, police touching the player for a while.
     if (!p.inCar && d < 34) {
       p.bustT += dt;
       if (p.bustT > 2.5) game.busted();
-    } else p.bustT = Math.max(0, p.bustT - dt * 2);
+    } else {
+      p.bustT = Math.max(0, p.bustT - dt * 2);
+    }
   }
 }
+
 // --- gang enemies + bosses ----------------------------------------------------
 export function spawnCrew(x, y, count, gang, hpMul = 1) {
   const list = [];
@@ -202,30 +244,42 @@ export function spawnCrew(x, y, count, gang, hpMul = 1) {
   for (let i = 0; i < count; i++) {
     const a = (i / count) * TAU;
     list.push({
-      x: x + Math.cos(a) * (70 + (i % 3) * 50), y: y + Math.sin(a) * (70 + (i % 3) * 50),
-      hp: 70 * hpMul, maxHp: 70 * hpMul, alive: true, gang,
-      color: g.color, fireCd: 1 + Math.random() * 2, angle: 0, down: 0,
+      x: x + Math.cos(a) * (70 + (i % 3) * 50),
+      y: y + Math.sin(a) * (70 + (i % 3) * 50),
+      hp: 70 * hpMul, maxHp: 70 * hpMul,
+      alive: true, gang,
+      color: g.color,
+      fireCd: 1 + Math.random() * 2,
+      angle: 0, down: 0,
     });
   }
   return list;
 }
 export function spawnBoss(missionId, x, y) {
   const b = BOSSES[missionId];
+  // Copy the portrait fields onto the entity so drawPortrait never gets
+  // undefined (a missing field used to render the boss portrait black).
   return {
-    x, y, hp: b.hp, maxHp: b.hp, alive: true, isBoss: true,
+    x, y,
+    hp: b.hp, maxHp: b.hp,
+    alive: true, isBoss: true,
     name: b.name, role: b.role, line: b.line, color: b.color,
     bg: b.bg, shirt: b.shirt, skin: b.skin, hair: b.hair, shades: b.shades, hat: b.hat,
-    fireCd: 2, angle: 0, down: 0, guardCount: b.guards,
+    fireCd: 2, angle: 0, down: 0,
+    guardCount: b.guards,
   };
 }
 export function updateEnemies(list, dt, game) {
   const p = game.player;
   for (const e of list) {
-    if (!e.alive) { e.down += dt; continue; }
+    if (!e.alive) {
+      e.down += dt;
+      continue;
+    }
     const d = dist(e.x, e.y, p.x, p.y);
     e.angle = angTo(e.x, e.y, p.x, p.y);
     e.fireCd -= dt;
-    // close in a little, keep some distance, strafe
+    // Close in a little, keep some distance, strafe.
     if (d > 320) {
       moveCircle(e, Math.cos(e.angle) * 70 * dt, Math.sin(e.angle) * 70 * dt, 10);
     } else if (d < 130) {
@@ -240,6 +294,7 @@ export function updateEnemies(list, dt, game) {
     }
   }
 }
+
 // --- bullets + particles -------------------------------------------------------
 export function updateBullets(dt, game) {
   const p = game.player;
@@ -255,18 +310,33 @@ export function updateBullets(dt, game) {
           e.hp -= b.dmg;
           sfx.hit();
           blood(b.x, b.y);
-          if (e.hp <= 0) { e.alive = false; e.down = 0; game.onEnemyDown(e); }
-          dead = true; break;
+          if (e.hp <= 0) {
+            e.alive = false;
+            e.down = 0;
+            game.onEnemyDown(e);
+          }
+          dead = true;
+          break;
         }
       }
-      if (!dead) for (const t of game.traffic) {
-        if (dist(b.x, b.y, t.x, t.y) < 22) { t.cond = Math.max(0, t.cond - 12); dead = true; break; }
+      if (!dead) {
+        for (const t of game.traffic) {
+          if (dist(b.x, b.y, t.x, t.y) < 22) {
+            t.cond = Math.max(0, t.cond - 12);
+            dead = true;
+            break;
+          }
+        }
       }
     } else if (!dead && b.from === 'enemy') {
-      const px = p.inCar ? p.car.x : p.x, py = p.inCar ? p.car.y : p.y;
+      const px = p.inCar ? p.car.x : p.x;
+      const py = p.inCar ? p.car.y : p.y;
       if (dist(b.x, b.y, px, py) < (p.inCar ? 24 : 13)) {
         if (p.inCar) p.car.cond = Math.max(0, p.car.cond - 3);
-        else { p.hp -= b.dmg; game.shake = 0.25; }
+        else {
+          p.hp -= b.dmg;
+          game.shake = 0.25;
+        }
         blood(b.x, b.y);
         dead = true;
       }
@@ -275,20 +345,30 @@ export function updateBullets(dt, game) {
   }
 }
 export function blood(x, y) {
-  for (let i = 0; i < 6; i++) particles.push({ x, y, vx: (Math.random() - 0.5) * 140, vy: (Math.random() - 0.5) * 140, life: 0.4, max: 0.4, color: '#c22a2a', size: 3 });
+  for (let i = 0; i < 6; i++) {
+    particles.push({
+      x, y,
+      vx: (Math.random() - 0.5) * 140, vy: (Math.random() - 0.5) * 140,
+      life: 0.4, max: 0.4, color: '#c22a2a', size: 3,
+    });
+  }
 }
 export function updateParticles(dt) {
   for (let i = particles.length - 1; i >= 0; i--) {
     const pt = particles[i];
-    pt.life -= dt; pt.x += pt.vx * dt; pt.y += pt.vy * dt;
+    pt.life -= dt;
+    pt.x += pt.vx * dt;
+    pt.y += pt.vy * dt;
     if (pt.life <= 0) particles.splice(i, 1);
   }
   for (let i = floaters.length - 1; i >= 0; i--) {
     const f = floaters[i];
-    f.life -= dt; f.y -= 26 * dt;
+    f.life -= dt;
+    f.y -= 26 * dt;
     if (f.life <= 0) floaters.splice(i, 1);
   }
 }
+
 // --- drawing entities -----------------------------------------------------------
 export function drawCar(ctx, car) {
   ctx.save();
@@ -297,29 +377,43 @@ export function drawCar(ctx, car) {
   ctx.fillStyle = 'rgba(0,0,0,0.30)';
   ctx.fillRect(-20, -11, 44, 26);
   if (car.isPolice) {
-    ctx.fillStyle = '#e8e8f0'; ctx.fillRect(-22, -13, 44, 26);
-    ctx.fillStyle = '#1f2a44'; ctx.fillRect(-22, -13, 44, 10);
-    ctx.fillStyle = '#c22a2a'; ctx.fillRect(-4, -13, 8, 26);
-    // light bar flashing
+    ctx.fillStyle = '#e8e8f0';
+    ctx.fillRect(-22, -13, 44, 26);
+    ctx.fillStyle = '#1f2a44';
+    ctx.fillRect(-22, -13, 44, 10);
+    ctx.fillStyle = '#c22a2a';
+    ctx.fillRect(-4, -13, 8, 26);
+    // Light bar flashing.
     const on = Math.floor(performance.now() / 180) % 2 === 0;
     ctx.fillStyle = on ? '#ff2a2a' : '#2a6aff';
     ctx.fillRect(-6, -15, 12, 4);
     ctx.fillStyle = on ? '#2a6aff' : '#ff2a2a';
     ctx.fillRect(-6, 11, 12, 4);
   } else {
-    ctx.fillStyle = car.def.color; ctx.fillRect(-22, -13, 44, 26);
-    ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fillRect(-22, -13, 44, 6);
-    ctx.fillStyle = '#1c2433'; ctx.fillRect(-4, -11, 16, 22);
-    ctx.fillStyle = '#d8e8f0'; ctx.fillRect(2, -11, 4, 22);
-    // headlights
+    ctx.fillStyle = car.def.color;
+    ctx.fillRect(-22, -13, 44, 26);
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fillRect(-22, -13, 44, 6);
+    ctx.fillStyle = '#1c2433';
+    ctx.fillRect(-4, -11, 16, 22);
+    ctx.fillStyle = '#d8e8f0';
+    ctx.fillRect(2, -11, 4, 22);
+    // Headlights.
     ctx.fillStyle = '#ffe9a8';
-    ctx.fillRect(20, -11, 3, 5); ctx.fillRect(20, 6, 3, 5);
+    ctx.fillRect(20, -11, 3, 5);
+    ctx.fillRect(20, 6, 3, 5);
   }
-  // wheels
+  // Wheels.
   ctx.fillStyle = '#111';
-  ctx.fillRect(-15, -15, 10, 4); ctx.fillRect(-15, 11, 10, 4);
-  ctx.fillRect(8, -15, 10, 4); ctx.fillRect(8, 11, 10, 4);
-  if (car.brakeLight) { ctx.fillStyle = '#ff2a2a'; ctx.fillRect(-24, -10, 3, 5); ctx.fillRect(-24, 5, 3, 5); }
+  ctx.fillRect(-15, -15, 10, 4);
+  ctx.fillRect(-15, 11, 10, 4);
+  ctx.fillRect(8, -15, 10, 4);
+  ctx.fillRect(8, 11, 10, 4);
+  if (car.brakeLight) {
+    ctx.fillStyle = '#ff2a2a';
+    ctx.fillRect(-24, -10, 3, 5);
+    ctx.fillRect(-24, 5, 3, 5);
+  }
   ctx.restore();
   if (car.cond < 100 && car.cond > 0) {
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -332,48 +426,78 @@ export function drawPerson(ctx, x, y, angle, color, isPlayer, aimAngle) {
   ctx.save();
   ctx.translate(x, y);
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
-  ctx.beginPath(); ctx.ellipse(2, 3, 11, 9, 0, 0, TAU); ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(2, 3, 11, 9, 0, 0, TAU);
+  ctx.fill();
   ctx.rotate(angle);
-  // gun when aiming
+  // Gun when aiming.
   if (aimAngle !== undefined) {
-    ctx.strokeStyle = '#222'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.moveTo(8, 0); ctx.lineTo(20, 0); ctx.stroke();
+    ctx.strokeStyle = '#222';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(8, 0);
+    ctx.lineTo(20, 0);
+    ctx.stroke();
   }
   ctx.fillStyle = color;
-  ctx.beginPath(); ctx.arc(0, 0, 10, 0, TAU); ctx.fill();
+  ctx.beginPath();
+  ctx.arc(0, 0, 10, 0, TAU);
+  ctx.fill();
   ctx.fillStyle = '#e8b98a';
-  ctx.beginPath(); ctx.arc(Math.cos(0) * 4, Math.sin(0) * 0, 5.5, 0, TAU); ctx.fill();
+  ctx.beginPath();
+  ctx.arc(4, 0, 5.5, 0, TAU);
+  ctx.fill();
   ctx.fillStyle = '#222';
-  ctx.beginPath(); ctx.arc(6, -2, 1.6, 0, TAU); ctx.fill();
-  ctx.beginPath(); ctx.arc(6, 2, 1.6, 0, TAU); ctx.fill();
+  ctx.beginPath();
+  ctx.arc(6, -2, 1.6, 0, TAU);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(6, 2, 1.6, 0, TAU);
+  ctx.fill();
   ctx.restore();
   if (isPlayer) {
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(x, y, 14, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, 14, 0, TAU);
+    ctx.stroke();
   }
 }
 export function drawEnemy(ctx, e) {
   if (!e.alive) {
     if (e.down < 2.5) {
-      ctx.save(); ctx.translate(e.x, e.y); ctx.rotate(1.2);
-      ctx.fillStyle = e.color; ctx.fillRect(-12, -5, 24, 10);
-      ctx.fillStyle = '#e8b98a'; ctx.beginPath(); ctx.arc(14, 0, 5, 0, TAU); ctx.fill();
+      ctx.save();
+      ctx.translate(e.x, e.y);
+      ctx.rotate(1.2);
+      ctx.fillStyle = e.color;
+      ctx.fillRect(-12, -5, 24, 10);
+      ctx.fillStyle = '#e8b98a';
+      ctx.beginPath();
+      ctx.arc(14, 0, 5, 0, TAU);
+      ctx.fill();
       ctx.restore();
     }
     return;
   }
   drawPerson(ctx, e.x, e.y, e.angle, e.color, false, e.angle);
-  // red triangle marker above the head
+  // Red triangle marker above the head.
   const bob = Math.sin(performance.now() / 200) * 3;
   ctx.fillStyle = '#ff2a2a';
   ctx.beginPath();
-  ctx.moveTo(e.x, e.y - 30 + bob); ctx.lineTo(e.x - 8, e.y - 42 + bob); ctx.lineTo(e.x + 8, e.y - 42 + bob);
-  ctx.closePath(); ctx.fill();
-  // hp bar
-  ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(e.x - 16, e.y - 24, 32, 4);
-  ctx.fillStyle = e.isBoss ? '#ff2a2a' : '#ff7a4b'; ctx.fillRect(e.x - 16, e.y - 24, 32 * (e.hp / e.maxHp), 4);
+  ctx.moveTo(e.x, e.y - 30 + bob);
+  ctx.lineTo(e.x - 8, e.y - 42 + bob);
+  ctx.lineTo(e.x + 8, e.y - 42 + bob);
+  ctx.closePath();
+  ctx.fill();
+  // HP bar.
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(e.x - 16, e.y - 24, 32, 4);
+  ctx.fillStyle = e.isBoss ? '#ff2a2a' : '#ff7a4b';
+  ctx.fillRect(e.x - 16, e.y - 24, 32 * (e.hp / e.maxHp), 4);
   if (e.isBoss) {
-    ctx.fillStyle = '#ffd24b'; ctx.font = 'bold 11px Arial'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffd24b';
+    ctx.font = 'bold 11px Arial';
+    ctx.textAlign = 'center';
     ctx.fillText(e.name, e.x, e.y - 48 + bob);
   }
 }

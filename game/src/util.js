@@ -1,35 +1,40 @@
-// Crimson Harbor — small helpers, input, canvas drawing utilities.
-// All code here is written for this entry (no library, no copied code).
+// Crimson Harbor — small helpers: math, input, and canvas drawing primitives.
+// Written for this entry; no library, no copied code.
 export const TAU = Math.PI * 2;
-export const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
-export const lerp = (a, b, t) => a + (b - a) * t;
-export const dist = (x1, y1, x2, y2) => Math.hypot(x2 - x1, y2 - y1);
-export const angTo = (x1, y1, x2, y2) => Math.atan2(y2 - y1, x2 - x1);
-export const angDiff = (a, b) => {
+
+export function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+export function lerp(a, b, t) { return a + (b - a) * t; }
+export function dist(x1, y1, x2, y2) { return Math.hypot(x2 - x1, y2 - y1); }
+export function angTo(x1, y1, x2, y2) { return Math.atan2(y2 - y1, x2 - x1); }
+export function angDiff(a, b) {
   let d = (b - a) % TAU;
   if (d > Math.PI) d -= TAU;
   if (d < -Math.PI) d += TAU;
   return d;
-};
-export const fmtMoney = (n) => '$' + Math.floor(n).toLocaleString('en-US');
-export const fmtTime = (h) => {
+}
+export function fmtMoney(n) { return '$' + Math.floor(n).toLocaleString('en-US'); }
+export function fmtTime(h) {
   const hh = Math.floor(h) % 24;
   const mm = Math.floor((h % 1) * 60);
   return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
-};
+}
+
 // Deterministic RNG (mulberry32) so the city is the same every run.
 export function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
-    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
     let t = Math.imul(a ^ (a >>> 15), 1 | a);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
 // ---- input ---------------------------------------------------------------
 export const keys = {};
 export const mouse = { x: 0, y: 0, down: false, clicked: false };
+
 export function bindInput(canvas) {
   addEventListener('keydown', (e) => {
     if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) e.preventDefault();
@@ -40,17 +45,21 @@ export function bindInput(canvas) {
     keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = false;
     if (e.key === ' ') keys[' '] = false;
   });
-  addEventListener('blur', () => { for (const k in keys) keys[k] = false; mouse.down = false; });
+  addEventListener('blur', () => {
+    for (const k in keys) keys[k] = false;
+    mouse.down = false;
+  });
   canvas.addEventListener('mousemove', (e) => {
     const r = canvas.getBoundingClientRect();
     mouse.x = (e.clientX - r.left) * (canvas.width / r.width);
     mouse.y = (e.clientY - r.top) * (canvas.height / r.height);
   });
-  canvas.addEventListener('mousedown', (e) => { mouse.down = true; mouse.clicked = true; });
+  canvas.addEventListener('mousedown', () => { mouse.down = true; mouse.clicked = true; });
   addEventListener('mouseup', () => { mouse.down = false; });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 export const pressed = (k) => !!keys[k];
+
 // ---- canvas helpers ------------------------------------------------------
 export function rr(ctx, x, y, w, h, r) {
   r = Math.min(r, w / 2, h / 2);
@@ -82,42 +91,74 @@ export function star(ctx, cx, cy, r, filled, color) {
   for (let i = 0; i < 10; i++) {
     const rad = i % 2 === 0 ? r : r * 0.45;
     const a = -Math.PI / 2 + (i * Math.PI) / 5;
-    const px = cx + Math.cos(a) * rad, py = cy + Math.sin(a) * rad;
-    if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    const px = cx + Math.cos(a) * rad;
+    const py = cy + Math.sin(a) * rad;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
   }
   ctx.closePath();
-  if (filled) { ctx.fillStyle = color; ctx.fill(); }
-  else { ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.5; ctx.stroke(); }
+  if (filled) {
+    ctx.fillStyle = color;
+    ctx.fill();
+  } else {
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
 }
-// A small canvas-drawn face portrait (used for dialog boxes and the menu roster).
+
+// A small canvas-drawn face portrait (dialog boxes and the menu roster).
+// The portrait spec is { bg, shirt, skin, hair, hat, shades }.
 export function drawPortrait(ctx, x, y, size, c) {
   const s = size;
   rr(ctx, x, y, s, s, 8);
-  ctx.fillStyle = c.bg; ctx.fill();
+  ctx.fillStyle = c.bg;
+  ctx.fill();
   ctx.save();
-  rr(ctx, x, y, s, s, 8); ctx.clip();
+  rr(ctx, x, y, s, s, 8);
+  ctx.clip();
   // shoulders
   ctx.fillStyle = c.shirt;
-  ctx.beginPath(); ctx.ellipse(x + s / 2, y + s * 1.05, s * 0.42, s * 0.34, 0, 0, TAU); ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(x + s / 2, y + s * 1.05, s * 0.42, s * 0.34, 0, 0, TAU);
+  ctx.fill();
   // head
   ctx.fillStyle = c.skin;
-  ctx.beginPath(); ctx.ellipse(x + s / 2, y + s * 0.48, s * 0.24, s * 0.27, 0, 0, TAU); ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(x + s / 2, y + s * 0.48, s * 0.24, s * 0.27, 0, 0, TAU);
+  ctx.fill();
   // hair
   ctx.fillStyle = c.hair;
-  ctx.beginPath(); ctx.ellipse(x + s / 2, y + s * 0.30, s * 0.25, s * 0.16, 0, Math.PI, 0); ctx.fill();
-  if (c.hat) { ctx.fillStyle = c.hat; ctx.fillRect(x + s * 0.22, y + s * 0.20, s * 0.56, s * 0.10); }
-  // eyes + shades
+  ctx.beginPath();
+  ctx.ellipse(x + s / 2, y + s * 0.30, s * 0.25, s * 0.16, 0, Math.PI, 0);
+  ctx.fill();
+  if (c.hat) {
+    ctx.fillStyle = c.hat;
+    ctx.fillRect(x + s * 0.22, y + s * 0.20, s * 0.56, s * 0.10);
+  }
+  // eyes, or shades
   if (c.shades) {
-    ctx.fillStyle = '#111'; rr(ctx, x + s * 0.30, y + s * 0.44, s * 0.40, s * 0.10, 3); ctx.fill();
+    ctx.fillStyle = '#111';
+    rr(ctx, x + s * 0.30, y + s * 0.44, s * 0.40, s * 0.10, 3);
+    ctx.fill();
   } else {
     ctx.fillStyle = '#1c1c22';
-    ctx.beginPath(); ctx.arc(x + s * 0.42, y + s * 0.48, s * 0.028, 0, TAU); ctx.fill();
-    ctx.beginPath(); ctx.arc(x + s * 0.58, y + s * 0.48, s * 0.028, 0, TAU); ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x + s * 0.42, y + s * 0.48, s * 0.028, 0, TAU);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(x + s * 0.58, y + s * 0.48, s * 0.028, 0, TAU);
+    ctx.fill();
   }
   // mouth
-  ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.lineWidth = Math.max(1, s * 0.02);
-  ctx.beginPath(); ctx.arc(x + s / 2, y + s * 0.60, s * 0.07, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.lineWidth = Math.max(1, s * 0.02);
+  ctx.beginPath();
+  ctx.arc(x + s / 2, y + s * 0.60, s * 0.07, 0.15 * Math.PI, 0.85 * Math.PI);
+  ctx.stroke();
   ctx.restore();
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 1;
-  rr(ctx, x, y, s, s, 8); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 1;
+  rr(ctx, x, y, s, s, 8);
+  ctx.stroke();
 }

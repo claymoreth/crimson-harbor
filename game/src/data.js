@@ -1,33 +1,47 @@
-// Crimson Harbor — all game data: city districts, characters, gangs, missions,
-// radio, weapons, cars, dialog. Every name here is original to this game.
-export const WORLD_W = 3600, WORLD_H = 2700;
-export const ROAD_STEP = 300, ROAD_W = 64;
+// Crimson Harbor — every number, name and line of story in one place.
+// City: Port Valen. Hero: Leo Marlow. Fixer: Mara Voss. Gangs: The Vipers,
+// Harbor Kings, The Docksiders. All names are original to this game.
+export const WORLD_W = 3600;
+export const WORLD_H = 2700;
+export const ROAD_STEP = 300;
+export const ROAD_W = 64;
+export const SAVE_KEY = 'crimson-harbor-save-v1';
 
-// 3x3 districts of Port Valen (each 1200 x 900).
-export const DISTRICTS = [
-  { name: 'OLD PIER', x: 0, y: 0, w: 1200, h: 900, tint: '#7a6a58', desc: 'Docks & warehouses' },
-  { name: 'MARINA BAY', x: 1200, y: 0, w: 1200, h: 900, tint: '#4f7d8c', desc: 'Boats & boardwalk' },
-  { name: 'PALM COURT', x: 2400, y: 0, w: 1200, h: 900, tint: '#7d8c5a', desc: 'Quiet avenues' },
-  { name: 'FOUNDRY ROW', x: 0, y: 900, w: 1200, h: 900, tint: '#8a6f5c', desc: 'Factories & yards' },
-  { name: 'HARBOR VIEW', x: 1200, y: 900, w: 1200, h: 900, tint: '#5c6a8c', desc: 'Downtown towers' },
-  { name: 'CORAL ROW', x: 2400, y: 900, w: 1200, h: 900, tint: '#a06a7d', desc: 'Shops & neon' },
-  { name: 'THE SHALLOWS', x: 0, y: 1800, w: 1200, h: 900, tint: '#c2a05e', desc: 'Beach & surf' },
-  { name: 'SUNSET STRIP', x: 1200, y: 1800, w: 1200, h: 900, tint: '#c27a4e', desc: 'Clubs & lights' },
-  { name: 'PORTSIDE', x: 2400, y: 1800, w: 1200, h: 900, tint: '#6a8a7d', desc: 'Harbor & cranes' },
+// Port Valen is a 3x3 grid of districts, each 1200 x 900.
+const DISTRICT_ROWS = [
+  ['OLD PIER', 'Docks & warehouses', '#7a6a58'],
+  ['MARINA BAY', 'Boats & boardwalk', '#4f7d8c'],
+  ['PALM COURT', 'Quiet avenues', '#7d8c5a'],
+  ['FOUNDRY ROW', 'Factories & yards', '#8a6f5c'],
+  ['HARBOR VIEW', 'Downtown towers', '#5c6a8c'],
+  ['CORAL ROW', 'Shops & neon', '#a06a7d'],
+  ['THE SHALLOWS', 'Beach & surf', '#c2a05e'],
+  ['SUNSET STRIP', 'Clubs & lights', '#c27a4e'],
+  ['PORTSIDE', 'Harbor & cranes', '#6a8a7d'],
 ];
+export const DISTRICTS = DISTRICT_ROWS.map(([name, desc, tint], i) => ({
+  name, desc, tint,
+  x: (i % 3) * 1200,
+  y: Math.floor(i / 3) * 900,
+  w: 1200,
+  h: 900,
+}));
 export function districtAt(x, y) {
-  for (const d of DISTRICTS) if (x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h) return d;
+  for (const d of DISTRICTS) {
+    if (x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h) return d;
+  }
   return DISTRICTS[4];
 }
 
-// Six selectable drivers. Leo Marlow is the story lead (default).
+// Six drivers to pick from. Leo Marlow is the story lead (index 0).
+// top/accel/sprint/aim are multipliers; hp is the on-foot health pool.
 export const CHARACTERS = [
-  { name: 'LEO MARLOW', role: 'GETAWAY DRIVER', top: 1.00, accel: 1.00, hp: 100, sprint: 1.00, aim: 1.00, color: '#e8b04b', bg: '#3a2f5e', shirt: '#c94f43', skin: '#e8b98a', hair: '#2b2118', shades: false, hat: null, blurb: 'Four years inside. Back to find who set him up.' },
-  { name: 'DANA COLE', role: 'WHEELWOMAN', top: 1.10, accel: 1.08, hp: 90, sprint: 1.00, aim: 1.00, color: '#e86aa8', bg: '#123a4a', shirt: '#2f7d8c', skin: '#c98a5e', hair: '#14100c', shades: false, hat: null, blurb: 'Drove the fastest crew on the coast. Never caught.' },
-  { name: 'MARCUS REED', role: 'ENFORCER', top: 0.94, accel: 0.95, hp: 140, sprint: 0.95, aim: 0.95, color: '#8a9aa8', bg: '#3a1f1f', shirt: '#4a4a55', skin: '#8a5a3a', hair: '#0c0a08', shades: true, hat: null, blurb: 'Built like a dock crane. Nobody pushes him around.' },
-  { name: 'ANA SOLANO', role: 'RUNNER', top: 1.00, accel: 1.00, hp: 90, sprint: 1.22, aim: 1.05, color: '#7ddb8a', bg: '#1f3a2a', shirt: '#d8c94b', skin: '#e8c49a', hair: '#3a2410', shades: false, hat: null, blurb: 'On foot she outruns every siren in Port Valen.' },
-  { name: 'TOMMY VALE', role: 'JOYRIDER', top: 1.06, accel: 1.12, hp: 85, sprint: 1.05, aim: 0.95, color: '#5aa8e8', bg: '#2a2a4a', shirt: '#e8e8e8', skin: '#f0c8a0', hair: '#c9a23a', shades: false, hat: '#c94f43', blurb: 'Young, reckless, and quicker than the cops.' },
-  { name: 'PRIYA NAIR', role: 'SHARPSHOOTER', top: 1.00, accel: 1.00, hp: 95, sprint: 1.00, aim: 1.25, color: '#c98ae8', bg: '#3a1f3a', shirt: '#5e3a7d', skin: '#a06a3a', hair: '#0c0a08', shades: false, hat: null, blurb: 'Never misses. The Harbor Kings learned that twice.' },
+  { name: 'LEO MARLOW', role: 'GETAWAY DRIVER', top: 1.00, accel: 1.00, sprint: 1.00, aim: 1.00, hp: 100, color: '#e8b04b', bg: '#3a2f5e', shirt: '#c94f43', skin: '#e8b98a', hair: '#2b2118', shades: false, hat: null, blurb: 'Four years inside. Back to find who set him up.' },
+  { name: 'DANA COLE', role: 'WHEELWOMAN', top: 1.10, accel: 1.08, sprint: 1.00, aim: 1.00, hp: 90, color: '#e86aa8', bg: '#123a4a', shirt: '#2f7d8c', skin: '#c98a5e', hair: '#14100c', shades: false, hat: null, blurb: 'Drove the fastest crew on the coast. Never caught.' },
+  { name: 'MARCUS REED', role: 'ENFORCER', top: 0.94, accel: 0.95, sprint: 0.95, aim: 0.95, hp: 140, color: '#8a9aa8', bg: '#3a1f1f', shirt: '#4a4a55', skin: '#8a5a3a', hair: '#0c0a08', shades: true, hat: null, blurb: 'Built like a dock crane. Nobody pushes him around.' },
+  { name: 'ANA SOLANO', role: 'RUNNER', top: 1.00, accel: 1.00, sprint: 1.22, aim: 1.05, hp: 90, color: '#7ddb8a', bg: '#1f3a2a', shirt: '#d8c94b', skin: '#e8c49a', hair: '#3a2410', shades: false, hat: null, blurb: 'On foot she outruns every siren in Port Valen.' },
+  { name: 'TOMMY VALE', role: 'JOYRIDER', top: 1.06, accel: 1.12, sprint: 1.05, aim: 0.95, hp: 85, color: '#5aa8e8', bg: '#2a2a4a', shirt: '#e8e8e8', skin: '#f0c8a0', hair: '#c9a23a', shades: false, hat: '#c94f43', blurb: 'Young, reckless, and quicker than the cops.' },
+  { name: 'PRIYA NAIR', role: 'SHARPSHOOTER', top: 1.00, accel: 1.00, sprint: 1.00, aim: 1.25, hp: 95, color: '#c98ae8', bg: '#3a1f3a', shirt: '#5e3a7d', skin: '#a06a3a', hair: '#0c0a08', shades: false, hat: null, blurb: 'Never misses. The Harbor Kings learned that twice.' },
 ];
 
 export const GANGS = {
@@ -61,79 +75,56 @@ export const RADIOS = [
   { name: 'PALM FM 102.7', show: 'Salt Air', song: 'Coral Club — Salt Air' },
 ];
 
-// 7 story jobs. Stages: drive | pickup | shoot | boss | escape | deliver | talk.
-// A stage is done when its goal is met; the mission ends after its last stage.
+// Seven story jobs. A stage is one of: drive (reach the marker), pickup (press
+// E), shoot (drop N of a gang), boss (dialog, then drop the boss + guards),
+// escape (reach the safehouse, then lose the heat), deliver (drive, on a clock),
+// talk (press E at Mara). The mission ends after its last stage.
+function job(id, ch, title, reward, brief, stages) {
+  return { id, ch, title, reward, brief, stages: stages.map(([type, x, y, text, next, extra]) => ({ type, x, y, text, next, ...(extra || {}) })) };
+}
 export const MISSIONS = [
-  {
-    id: 1, ch: 1, title: 'FIRST LIGHT', reward: 800,
-    brief: 'Mara needs a driver tonight. Pick up her package, then bring it home.',
-    stages: [
-      { type: 'drive', x: 1050, y: 450, text: 'Drive to Mara\'s pickup on Marina Bay', next: 'Pick up the package' },
-      { type: 'pickup', x: 1050, y: 450, text: 'Press E to take the package', next: 'Cops are coming — run' },
-      { type: 'escape', x: 2550, y: 1950, text: 'Lose the cops, then reach the safehouse', next: 'Break line of sight' },
-      { type: 'escape', x: 2550, y: 1950, text: 'Reach the safehouse on Sunset Strip', next: 'Job done' },
-    ],
-  },
-  {
-    id: 2, ch: 2, title: 'DOCKSIDE DEBT', reward: 1200,
-    brief: 'The Vipers owe Mara money. Collect it — loudly, on foot.',
-    stages: [
-      { type: 'drive', x: 450, y: 1650, text: 'Drive to the docks in Old Pier', next: 'Get out and settle it' },
-      { type: 'shoot', x: 450, y: 1650, count: 6, gang: 'vipers', text: 'Take out the Vipers crew', next: 'Lose any heat' },
-      { type: 'escape', x: 2550, y: 1950, text: 'Lose the heat, then reach the safehouse', next: 'Report back' },
-      { type: 'talk', x: 1650, y: 1050, text: 'Report back to Mara in Harbor View', next: 'Job done' },
-    ],
-  },
-  {
-    id: 3, ch: 3, title: 'KING OF THE HARBOR', reward: 2000,
-    brief: 'Big Ray Calloway runs the Harbor Kings. End his run tonight.',
-    stages: [
-      { type: 'drive', x: 2850, y: 1950, text: 'Drive to the Kings warehouse in Portside', next: 'Face Big Ray' },
-      { type: 'boss', x: 2850, y: 1950, text: 'Take down Big Ray Calloway', next: 'Lose any heat' },
-      { type: 'escape', x: 2550, y: 1950, text: 'Lose the heat, then reach the safehouse', next: 'Report back' },
-      { type: 'talk', x: 1650, y: 1050, text: 'Report back to Mara in Harbor View', next: 'Job done' },
-    ],
-  },
-  {
-    id: 4, ch: 4, title: 'THE LONG HAUL', reward: 1500,
-    brief: 'A truck full of cargo has to cross the city before dawn. Fast.',
-    stages: [
-      { type: 'drive', x: 450, y: 450, text: 'Drive to the truck in Old Pier', next: 'Take the wheel' },
-      { type: 'deliver', x: 2850, y: 450, text: 'Haul the cargo to Palm Court — keep it moving', next: 'Drop it off' },
-      { type: 'deliver', x: 2850, y: 1950, text: 'Deliver the cargo to Portside', next: 'Lose any heat' },
-      { type: 'escape', x: 2550, y: 1950, text: 'Lose the heat, then reach the safehouse', next: 'Job done' },
-    ],
-  },
-  {
-    id: 5, ch: 5, title: 'SAFEHOUSE RUN', reward: 1800,
-    brief: 'Mara\'s runner is exposed. Drive him home while the Vipers chase you.',
-    stages: [
-      { type: 'drive', x: 1650, y: 450, text: 'Drive to the runner in Marina Bay', next: 'Pick him up' },
-      { type: 'pickup', x: 1650, y: 450, text: 'Press E to pick up the runner', next: 'Drive — they are coming' },
-      { type: 'escape', x: 2550, y: 1950, text: 'Outrun the Vipers to the safehouse', next: 'Lose any heat' },
-      { type: 'escape', x: 2550, y: 1950, text: 'Reach the safehouse on Sunset Strip', next: 'Job done' },
-    ],
-  },
-  {
-    id: 6, ch: 6, title: 'HARBOR HEIST', reward: 2500,
-    brief: 'The Docksiders guard a shipment at the port. Take it. All of it.',
-    stages: [
-      { type: 'drive', x: 2850, y: 1650, text: 'Drive to the port in Portside', next: 'Clear the dock' },
-      { type: 'shoot', x: 2850, y: 1650, count: 8, gang: 'docksiders', text: 'Take out the Docksiders crew', next: 'Grab the shipment' },
-      { type: 'pickup', x: 2850, y: 1650, text: 'Press E to grab the shipment', next: 'Run — cops are coming' },
-      { type: 'escape', x: 2550, y: 1950, text: 'Escape to the safehouse on Sunset Strip', next: 'Job done' },
-    ],
-  },
-  {
-    id: 7, ch: 7, title: 'THE RECKONING', reward: 4000,
-    brief: 'Dario Venn set Leo up four years ago. Tonight Leo collects.',
-    stages: [
-      { type: 'drive', x: 1650, y: 1350, text: 'Drive to Venn\'s tower in Harbor View', next: 'Go in loud' },
-      { type: 'boss', x: 1650, y: 1350, text: 'Take down Dario Venn and his crew', next: 'Lose any heat' },
-      { type: 'escape', x: 2550, y: 1950, text: 'Lose the heat, then reach the safehouse', next: 'Finish it' },
-      { type: 'talk', x: 1650, y: 1050, text: 'Meet Mara one last time', next: 'Job done' },
-    ],
-  },
+  job(1, 1, 'FIRST LIGHT', 800, 'Mara needs a driver tonight. Pick up her package, then bring it home.', [
+    ['drive', 1050, 450, 'Drive to Mara\'s pickup on Marina Bay', 'Pick up the package'],
+    ['pickup', 1050, 450, 'Press E to take the package', 'Cops are coming — run'],
+    ['escape', 2550, 1950, 'Lose the cops, then reach the safehouse', 'Break line of sight'],
+    ['escape', 2550, 1950, 'Reach the safehouse on Sunset Strip', 'Job done'],
+  ]),
+  job(2, 2, 'DOCKSIDE DEBT', 1200, 'The Vipers owe Mara money. Collect it — loudly, on foot.', [
+    ['drive', 450, 1650, 'Drive to the docks in Old Pier', 'Get out and settle it'],
+    ['shoot', 450, 1650, 'Take out the Vipers crew', 'Lose any heat', { count: 6, gang: 'vipers' }],
+    ['escape', 2550, 1950, 'Lose the heat, then reach the safehouse', 'Report back'],
+    ['talk', 1650, 1050, 'Report back to Mara in Harbor View', 'Job done'],
+  ]),
+  job(3, 3, 'KING OF THE HARBOR', 2000, 'Big Ray Calloway runs the Harbor Kings. End his run tonight.', [
+    ['drive', 2850, 1950, 'Drive to the Kings warehouse in Portside', 'Face Big Ray'],
+    ['boss', 2850, 1950, 'Take down Big Ray Calloway', 'Lose any heat'],
+    ['escape', 2550, 1950, 'Lose the heat, then reach the safehouse', 'Report back'],
+    ['talk', 1650, 1050, 'Report back to Mara in Harbor View', 'Job done'],
+  ]),
+  job(4, 4, 'THE LONG HAUL', 1500, 'A truck full of cargo has to cross the city before dawn. Fast.', [
+    ['drive', 450, 450, 'Drive to the truck in Old Pier', 'Take the wheel'],
+    ['deliver', 2850, 450, 'Haul the cargo to Palm Court — keep it moving', 'Drop it off'],
+    ['deliver', 2850, 1950, 'Deliver the cargo to Portside', 'Lose any heat'],
+    ['escape', 2550, 1950, 'Lose the heat, then reach the safehouse', 'Job done'],
+  ]),
+  job(5, 5, 'SAFEHOUSE RUN', 1800, 'Mara\'s runner is exposed. Drive him home while the Vipers chase you.', [
+    ['drive', 1650, 450, 'Drive to the runner in Marina Bay', 'Pick him up'],
+    ['pickup', 1650, 450, 'Press E to pick up the runner', 'Drive — they are coming'],
+    ['escape', 2550, 1950, 'Outrun the Vipers to the safehouse', 'Lose any heat'],
+    ['escape', 2550, 1950, 'Reach the safehouse on Sunset Strip', 'Job done'],
+  ]),
+  job(6, 6, 'HARBOR HEIST', 2500, 'The Docksiders guard a shipment at the port. Take it. All of it.', [
+    ['drive', 2850, 1650, 'Drive to the port in Portside', 'Clear the dock'],
+    ['shoot', 2850, 1650, 'Take out the Docksiders crew', 'Grab the shipment', { count: 8, gang: 'docksiders' }],
+    ['pickup', 2850, 1650, 'Press E to grab the shipment', 'Run — cops are coming'],
+    ['escape', 2550, 1950, 'Escape to the safehouse on Sunset Strip', 'Job done'],
+  ]),
+  job(7, 7, 'THE RECKONING', 4000, 'Dario Venn set Leo up four years ago. Tonight Leo collects.', [
+    ['drive', 1650, 1350, 'Drive to Venn\'s tower in Harbor View', 'Go in loud'],
+    ['boss', 1650, 1350, 'Take down Dario Venn and his crew', 'Lose any heat'],
+    ['escape', 2550, 1950, 'Lose the heat, then reach the safehouse', 'Finish it'],
+    ['talk', 1650, 1050, 'Meet Mara one last time', 'Job done'],
+  ]),
 ];
 
 export const BOSSES = {
@@ -170,4 +161,3 @@ export const POIS = [
   { type: 'property', x: 750, y: 1050, name: 'Foundry Loft', price: 8000 },
   { type: 'contact', x: 1650, y: 1050, name: 'Mara Voss' },
 ];
-export const SAVE_KEY = 'crimson-harbor-save-v1';
