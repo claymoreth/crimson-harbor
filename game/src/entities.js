@@ -2,7 +2,7 @@
 // police, gang enemies and bosses, bullets, particles. Everything the HUD
 // shows reads from here.
 import { WORLD_W, WORLD_H, ROAD_STEP, WEAPONS, CARS, POLICE_NAMES, GANGS, BOSSES } from './data.js';
-import { clamp, dist, angTo, angDiff, TAU } from './util.js';
+import { clamp, dist, angTo, angDiff, TAU, rr } from './util.js';
 import { moveCircle, isWater, onRoad, lineBlocked } from './world.js';
 import { sfx } from './audio.js';
 
@@ -16,7 +16,7 @@ export function makePlayer(x, y, charIndex) {
     angle: -Math.PI / 2,
     hp: 100, maxHp: 100,
     inCar: false, car: null,
-    speed: 0, charIndex,
+    speed: 0, charIndex, walkPhase: 0,
     weapon: 1, ammo: {}, reserve: {},
     fireCd: 0, reloadCd: 0, sprint: false, dead: false, bustT: 0,
   };
@@ -49,7 +49,7 @@ export function driveCar(car, input, dt, topMul = 1) {
   if (!input.up && !input.down) car.speed -= Math.sign(car.speed) * 120 * dt;
   if (Math.abs(car.speed) < 4 && !input.up && !input.down) car.speed = 0;
   car.speed = clamp(car.speed, -160, top);
-  const steerAmt = (input.left ? 1 : 0) - (input.right ? 1 : 0);
+  const steerAmt = (input.right ? 1 : 0) - (input.left ? 1 : 0);
   const dir = car.speed >= 0 ? 1 : -1;
   const drift = input.drift ? 1.9 : 1;
   car.angle += steerAmt * 2.6 * drift * (Math.min(Math.abs(car.speed), 300) / 300) * dir * dt;
@@ -127,7 +127,7 @@ export function updateTraffic(list, dt, player) {
     }
     const want = angTo(c.x, c.y, c.target.x, c.target.y);
     const diff = angDiff(c.angle, want);
-    const input = { up: true, down: false, left: diff > 0.12, right: diff < -0.12, drift: false };
+    const input = { up: true, down: false, left: diff < -0.12, right: diff > 0.12, drift: false };
     // Slow down for the player / other cars ahead.
     const ahead = dist(c.x + Math.cos(c.angle) * 70, c.y + Math.sin(c.angle) * 70, player.x, player.y);
     if (ahead < 60) input.up = false;
@@ -166,11 +166,13 @@ export function updatePeds(list, dt, player, danger) {
       p.panic -= dt;
       p.angle = angTo(player.x, player.y, p.x, p.y);
       moveCircle(p, Math.cos(p.angle) * 90 * dt, Math.sin(p.angle) * 90 * dt, 8);
+      p.walkPhase = (p.walkPhase || 0) + dt * 11;
     } else if (p.wanderT <= 0) {
       p.wanderT = 2 + Math.random() * 4;
       p.angle = Math.random() * TAU;
     } else {
       moveCircle(p, Math.cos(p.angle) * p.speed * dt, Math.sin(p.angle) * p.speed * dt, 8);
+      p.walkPhase = (p.walkPhase || 0) + dt * 9;
     }
   }
 }
@@ -184,9 +186,160 @@ export function makePolice(n, player, startIdx = 0) {
     const y = clamp(player.y + Math.sin(a) * 700, 100, WORLD_H - 100);
     const car = makeCar(x, y, angTo(x, y, player.x, player.y), { name: 'PVPD INTERCEPTOR', color: '#1f2a44', top: 1.02 }, true, POLICE_NAMES[(startIdx + i) % POLICE_NAMES.length]);
     car.mode = 'PURSUIT';
+    car.recoverT = 0; // stuck-recovery timer (Fix 6)
+    car.detourSide = 0; // +1/-1: which side to route around a building (Fix 6)
+    car.detour = null; // active detour waypoint {x, y} (Fix 6)
+    car.route = null; // road-grid route waypoints [{x, y}] (Fix 6)
+    car.routeCell = null; // target grid cell the route was built for (Fix 6)
+    car.recoverWant = 0; // aim angle the stuck recovery steers toward (Fix 6)
     list.push(car);
   }
   return list;
+}
+// Police navigation (Fix 6): the road grid is guaranteed clear of buildings
+// (roads run at 150 + 300k, buildings sit strictly inside the blocks
+// between them), so a police car that cannot see the player drives to the
+// road grid and follows intersections around the block instead of grinding
+// into a wall. BFS over the 11 x 8 intersection grid gives the route.
+function lineBlockedWide(c, tx, ty) {
+  // A 2px probe reads "clear" for a line that grazes a building corner, but
+  // the 20px-radius car cannot fit through it. Check the direct line plus
+  // two parallels offset by the car's radius on both sides.
+  if (lineBlocked(c.x, c.y, tx, ty)) return true;
+  const dx = tx - c.x, dy = ty - c.y;
+  const dd = Math.hypot(dx, dy) || 1;
+  const nx = -dy / dd * 32, ny = dx / dd * 32;
+  if (lineBlocked(c.x + nx, c.y + ny, tx + nx, ty + ny)) return true;
+  if (lineBlocked(c.x - nx, c.y - ny, tx - nx, ty - ny)) return true;
+  return false;
+}
+// Road-grid helpers (Fix 6): intersections at (150 + 300i, 150 + 300j),
+// usable i = 0..10 (x <= 3150, east of that is water), j = 0..7 (y <= 2250).
+const GRID_I = 11;
+const GRID_J = 8;
+function gridX(i) { return 150 + 300 * i; }
+function gridY(j) { return 150 + 300 * j; }
+function nearestGrid(x, y) {
+  return {
+    i: clamp(Math.round((x - 150) / 300), 0, GRID_I - 1),
+    j: clamp(Math.round((y - 150) / 300), 0, GRID_J - 1),
+  };
+}
+// Nearest point on a road centreline: the closer of the vertical-road point
+// (rx, y) and the horizontal-road point (x, ry). Prefer the one whose line
+// from the car is clear, so the car does not drive into a wall just to
+// reach the road.
+function nearestRoadPoint(c) {
+  const g = nearestGrid(c.x, c.y);
+  const rx = gridX(g.i), ry = gridY(g.j);
+  const vert = { x: rx, y: c.y };
+  const horiz = { x: c.x, y: ry };
+  const first = Math.abs(c.x - rx) <= Math.abs(c.y - ry) ? vert : horiz;
+  const second = first === vert ? horiz : vert;
+  if (!lineBlockedWide(c, first.x, first.y)) return first;
+  return second;
+}
+// BFS over the intersection grid. Returns the full intersection list
+// INCLUDING the start — the car must drive to its nearest intersection
+// along the road first. Every leg runs along a road, so it is clear.
+function gridPath(fi, fj, ti, tj) {
+  if (fi === ti && fj === tj) return [{ i: fi, j: fj }];
+  const key = (i, j) => j * GRID_I + i;
+  const prev = new Map([[key(fi, fj), null]]);
+  const queue = [{ i: fi, j: fj }];
+  while (queue.length) {
+    const cur = queue.shift();
+    for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const ni = cur.i + di, nj = cur.j + dj;
+      if (ni < 0 || ni >= GRID_I || nj < 0 || nj >= GRID_J) continue;
+      const k = key(ni, nj);
+      if (prev.has(k)) continue;
+      prev.set(k, key(cur.i, cur.j));
+      if (ni === ti && nj === tj) {
+        const path = [{ i: ti, j: tj }];
+        let pk = k;
+        while (prev.get(pk) !== null) {
+          pk = prev.get(pk);
+          path.unshift({ i: pk % GRID_I, j: Math.floor(pk / GRID_I) });
+        }
+        return path;
+      }
+      queue.push({ i: ni, j: nj });
+    }
+  }
+  return null;
+}
+// Full route to (tx, ty): nearest road point first (get ON a road), then
+// the BFS intersections, then the target itself as the final waypoint.
+function buildRoute(c, tx, ty) {
+  const from = nearestGrid(c.x, c.y);
+  const to = nearestGrid(tx, ty);
+  const path = gridPath(from.i, from.j, to.i, to.j);
+  if (!path) return null;
+  const pts = [nearestRoadPoint(c)];
+  for (const n of path) pts.push({ x: gridX(n.i), y: gridY(n.j) });
+  pts.push({ x: tx, y: ty });
+  return pts;
+}
+// Last-mile detour (Fix 6): when the car and the target share one grid cell,
+// aim at a point offset sideways from the target so the car drives AROUND
+// the building corner instead of grinding into its wall. Tries the
+// previously used side first, then the other side, with increasing offsets.
+// Returns the offset point + side, or null when no clear offset exists.
+function probeDetour(c, tx, ty) {
+  const dx = tx - c.x, dy = ty - c.y;
+  const dd = Math.hypot(dx, dy) || 1;
+  const ux = dx / dd, uy = dy / dd;
+  const nx = -uy, ny = ux; // perpendicular; +1 = clockwise side of the target dir
+  const sides = c.detourSide ? [c.detourSide, -c.detourSide] : [1, -1];
+  for (const s of sides) {
+    for (const off of [170, 280, 400]) {
+      // Clamped to dry land (water starts at x >= 3300, y >= 2400).
+      const ox = clamp(tx + nx * s * off, 40, 3290);
+      const oy = clamp(ty + ny * s * off, 40, 2390);
+      // Both legs must be clear for the 20px-radius car: car -> offset
+      // point (wide check) AND offset point -> target (so the point is not
+      // inside/behind another building).
+      if (!lineBlockedWide(c, ox, oy) && !lineBlocked(ox, oy, tx, ty)) {
+        return { side: s, x: ox, y: oy };
+      }
+    }
+  }
+  return null;
+}
+// Aim angle toward (tx, ty), routing around buildings. Priority: (1) a
+// persistent detour waypoint for the last mile, kept until the car reaches
+// it or the direct line opens up; (2) straight at the target when the wide
+// line check is clear; (3) a last-mile offset detour when car and target
+// share one grid cell; (4) the road-grid route otherwise (rebuilt when the
+// target moves into another grid cell, or when the route runs out).
+function aimAngle(c, tx, ty) {
+  if (c.detour) {
+    if (dist(c.x, c.y, c.detour.x, c.detour.y) < 60 || !lineBlockedWide(c, tx, ty)) c.detour = null;
+    else return angTo(c.x, c.y, c.detour.x, c.detour.y);
+  }
+  if (!lineBlockedWide(c, tx, ty)) {
+    c.route = null;
+    return angTo(c.x, c.y, tx, ty);
+  }
+  const pg = nearestGrid(c.x, c.y);
+  const tg = nearestGrid(tx, ty);
+  if (pg.i === tg.i && pg.j === tg.j) {
+    const det = probeDetour(c, tx, ty);
+    if (det) { c.detourSide = det.side; c.detour = { x: det.x, y: det.y }; return angTo(c.x, c.y, det.x, det.y); }
+  }
+  if (!c.route || !c.route.length || !c.routeCell || c.routeCell.i !== tg.i || c.routeCell.j !== tg.j) {
+    c.route = buildRoute(c, tx, ty);
+    c.routeCell = { i: tg.i, j: tg.j };
+  }
+  if (c.route && c.route.length) {
+    if (dist(c.x, c.y, c.route[0].x, c.route[0].y) < 45) {
+      c.route.shift();
+      if (!c.route.length) { c.route = null; return angTo(c.x, c.y, tx, ty); }
+    }
+    return angTo(c.x, c.y, c.route[0].x, c.route[0].y);
+  }
+  return angTo(c.x, c.y, tx, ty);
 }
 export function updatePolice(list, dt, game) {
   const p = game.player;
@@ -201,21 +354,102 @@ export function updatePolice(list, dt, game) {
     else if (c.mode === 'ROADBLOCK' && d < 260) c.mode = 'PURSUIT';
     else if (c.mode !== 'ROADBLOCK') c.mode = 'PURSUIT';
     let input;
-    if (c.mode === 'ROADBLOCK') {
+    // Stuck recovery: reverse out of the wall for ~1.2s while steering the
+    // nose toward the recovery target (see the steering swap below, which
+    // makes reverse steering rotate the nose the right way). Backing out
+    // already pointing along the road beats backing straight out and then
+    // having to turn the nose at low speed, where the car can barely steer.
+    if (c.recoverT > 0) {
+      c.recoverT -= dt;
+      // Reverse while steering the nose toward the recovery target (the
+      // route waypoint / player). The steering swap below flips left/right
+      // while the car rolls backward, so the nose rotates TOWARD the target
+      // instead of away from it — the car backs out of the wall already
+      // pointing along the road.
+      const rWant = c.recoverWant !== undefined ? c.recoverWant : angTo(c.x, c.y, px, py);
+      const rDiff = angDiff(c.angle, rWant);
+      input = { up: false, down: true, left: rDiff < -0.1, right: rDiff > 0.1, drift: Math.abs(rDiff) > 0.5 };
+      if (c.recoverT <= 0) { c.stuckT = 0; c.stuckX = c.x; c.stuckY = c.y; }
+    } else if (c.stuckT > 0.8) {
+      c.recoverT = 1.2;
+      c.stuckT = 0;
+      // Zero the speed first: leftover forward momentum would make the
+      // reverse steering turn the nose the WRONG way for the first frames.
+      c.speed = 0;
+      const det = probeDetour(c, px, py);
+      c.detourSide = det ? det.side : (c.detourSide ? -c.detourSide : 1);
+      // Aim the recovery at where the car needs to go next (the player),
+      // so the reverse swing points it along the road. Use the DIRECT
+      // angle, not aimAngle: aimAngle rebuilds the route as a side effect,
+      // and rebuilding it for the PLAYER here would clobber the route the
+      // ROADBLOCK branch is following (its target is 260px ahead of the
+      // player, not the player itself) — the car would chase a route whose
+      // destination flip-flops every recovery.
+      c.recoverWant = angTo(c.x, c.y, px, py);
+      input = { up: false, down: true, left: false, right: false, drift: false };
+    } else if (c.mode === 'ROADBLOCK') {
       // Park ahead of the player, across the road.
       const tx = px + Math.cos(p.angle || 0) * 260;
       const ty = py + Math.sin(p.angle || 0) * 260;
-      const want = angTo(c.x, c.y, tx, ty);
+      const want = aimAngle(c, tx, ty);
       const diff = angDiff(c.angle, want);
-      input = { up: d > 60, down: false, left: diff > 0.15, right: diff < -0.15, drift: false };
+      input = { up: d > 60, down: false, left: diff < -0.15, right: diff > 0.15, drift: Math.abs(diff) > 0.5 };
       if (dist(c.x, c.y, tx, ty) < 70) input.up = false;
     } else {
-      const want = angTo(c.x, c.y, px, py);
+      // PURSUIT and RAMMING: chase the player. PURSUIT routes around
+      // buildings; RAMMING aims straight (it is already adjacent) and drops
+      // any stale detour waypoint — but if the straight line is blocked
+      // (e.g. a building corner clips the car's circle), route around it
+      // instead of grinding the wall; keep the route so it is not rebuilt
+      // every frame.
+      if (c.mode === 'RAMMING') c.detour = null;
+      const want = c.mode === 'PURSUIT' || lineBlockedWide(c, px, py) ? aimAngle(c, px, py) : angTo(c.x, c.y, px, py);
       const diff = angDiff(c.angle, want);
-      input = { up: true, down: false, left: diff > 0.1, right: diff < -0.1, drift: false };
+      // On foot, the police pulls up instead of blasting past: cap the
+      // approach speed by distance, and brake to a stop right beside the
+      // player so the bust timer (2.5s within 34px) can actually run — at
+      // 550px/s the car blew past and its wide U-turn threw it into walls.
+      // The player can still run away during those 2.5s. In a car, ram at
+      // full speed as before.
+      let up = true, down = false;
+      if (!p.inCar) {
+        if (d < 30) { up = false; down = c.speed > 0; }
+        else {
+          const cap = d < 60 ? 90 : d < 130 ? 170 : d < 260 ? 300 : Infinity;
+          up = c.speed < cap;
+          // Brake (not just coast) down to the approach cap: coasting
+          // from 300 takes ~340px to reach 90, so the car would blow past
+          // the player before the pull-up stop can engage.
+          down = c.speed > cap + 40;
+        }
+      }
+      // Drift on sharp turns: the only way to tighten the turn radius
+      // (115px at full steer -> ~61px), so U-turns fit between buildings.
+      // But NOT when already close to an on-foot player: a 61px turn radius
+      // at 60px distance is a stable orbit that never closes in. Without
+      // drift the car spirals inward, pulls up beside the player and busts.
+      const closeFoot = !p.inCar && d < 90;
+      input = { up, down, left: diff < -0.1, right: diff > 0.1, drift: !closeFoot && Math.abs(diff) > 0.5 };
     }
+    // When the car rolls backward, driveCar flips the steering sense
+    // (dir = -1): a "left" input rotates the nose the other way. The AI
+    // always thinks in "rotate the nose toward the target" terms, so swap
+    // left/right while reversing — this covers the reverse-to-forward
+    // transition after a recovery, when the car is still rolling backward
+    // but already driving forward.
+    if (c.speed < 0) { const t = input.left; input.left = input.right; input.right = t; }
     const topMul = game.wanted >= 4 ? 1.06 : game.wanted >= 3 ? 1.0 : 0.94;
     driveCar(c, input, dt, topMul);
+    // Stuck detection: commanded forward but barely moved. Anchor = position
+    // at the start of the current window; if the car moves >25px the window
+    // resets, otherwise stuckT grows. Uses the pre-existing stuckT field.
+    if (input.up) {
+      if (c.stuckX === undefined) { c.stuckX = c.x; c.stuckY = c.y; c.stuckT = 0; }
+      if (dist(c.x, c.y, c.stuckX, c.stuckY) > 25) { c.stuckX = c.x; c.stuckY = c.y; c.stuckT = 0; }
+      else c.stuckT += dt;
+    } else {
+      c.stuckT = 0; c.stuckX = c.x; c.stuckY = c.y;
+    }
     // Ram: when touching the player's car, damage + shove.
     if (p.inCar && d < 52 && c.ramCd <= 0) {
       c.ramCd = 0.8;
@@ -227,13 +461,16 @@ export function updatePolice(list, dt, game) {
       game.shake = 0.35;
     }
     c.ramCd -= dt;
-    // Busted: on foot, police touching the player for a while.
-    if (!p.inCar && d < 34) {
-      p.bustT += dt;
-      if (p.bustT > 2.5) game.busted();
-    } else {
-      p.bustT = Math.max(0, p.bustT - dt * 2);
-    }
+  }
+  // Busted: on foot, a police car touching the player for a while. Checked
+  // ONCE per frame, not per car: with several cars, the far ones' decay
+  // cancelled the near one's accumulation every frame, so a parked cop
+  // beside the player never busted them.
+  if (!p.inCar && list.some(c => dist(c.x, c.y, px, py) < 34)) {
+    p.bustT += dt;
+    if (p.bustT > 2.5) game.busted();
+  } else {
+    p.bustT = Math.max(0, p.bustT - dt * 2);
   }
 }
 
@@ -282,8 +519,10 @@ export function updateEnemies(list, dt, game) {
     // Close in a little, keep some distance, strafe.
     if (d > 320) {
       moveCircle(e, Math.cos(e.angle) * 70 * dt, Math.sin(e.angle) * 70 * dt, 10);
+      e.walkPhase = (e.walkPhase || 0) + dt * 10;
     } else if (d < 130) {
       moveCircle(e, -Math.cos(e.angle) * 40 * dt, -Math.sin(e.angle) * 40 * dt, 10);
+      e.walkPhase = (e.walkPhase || 0) + dt * 10;
     }
     if (e.fireCd <= 0 && d < 520 && !lineBlocked(e.x, e.y, p.x, p.y)) {
       e.fireCd = e.isBoss ? 1.1 : 1.6 + Math.random();
@@ -377,18 +616,126 @@ export function drawCar(ctx, car) {
   ctx.fillStyle = 'rgba(0,0,0,0.30)';
   ctx.fillRect(-20, -11, 44, 26);
   if (car.isPolice) {
-    ctx.fillStyle = '#e8e8f0';
-    ctx.fillRect(-22, -13, 44, 26);
-    ctx.fillStyle = '#1f2a44';
-    ctx.fillRect(-22, -13, 44, 10);
+    // Fix 5 (Mana, 19 Nov: "jangan kaya kotak doang di kasih sirine") — the
+    // Fix 4 car was still a plain 44x26 RECT with a light bar on top: a box,
+    // not a car. This redraws it as a REAL top-down car: a shaped silhouette
+    // (rounded corners, tapered nose, mid widest), a distinct cabin with
+    // glass, mirrors, proper tyres with hubs, bumpers, lamps, grille.
+    // Black-and-white livery is kept (black hood + trunk, white doors).
+    // Rotated frame: +x = front. Wheels are drawn here too (the shared
+    // wheel rects below are gated off for police cars).
+    const rr = (x, y, w, h, r) => {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    };
+    // --- Body silhouette: rounded corners, tapered nose, mid widest. ---
+    ctx.beginPath();
+    ctx.moveTo(16, -10);
+    ctx.quadraticCurveTo(22, -10, 22, -5);   // nose top corner
+    ctx.lineTo(22, 5);
+    ctx.quadraticCurveTo(22, 10, 16, 10);    // nose bottom corner
+    ctx.lineTo(6, 12.5);
+    ctx.lineTo(-14, 12.5);
+    ctx.quadraticCurveTo(-21, 12.5, -21, 6); // rear bottom corner
+    ctx.lineTo(-21, -6);
+    ctx.quadraticCurveTo(-21, -12.5, -14, -12.5);
+    ctx.lineTo(6, -12.5);
+    ctx.closePath();
+    ctx.fillStyle = '#e8e8f0';               // white doors = base
+    ctx.fill();
+    // Hood (front) + trunk (rear) in black, clipped to the silhouette so
+    // the black follows the rounded shape instead of a rectangle.
+    ctx.save();
+    ctx.clip();
+    ctx.fillStyle = '#101018';
+    ctx.fillRect(11, -14, 12, 28);
+    ctx.fillRect(-23, -14, 12, 28);
+    // Soft shading along one side so the body reads 3D, not flat.
+    ctx.fillStyle = 'rgba(0,0,0,0.12)';
+    ctx.fillRect(-23, 9, 46, 4);
+    ctx.restore();
+    // Body outline so the silhouette edge reads against the road.
+    ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // --- Cabin: windshield + rear window (dark glass trapezoids) + roof. ---
+    ctx.fillStyle = '#16202e';
+    ctx.beginPath();
+    ctx.moveTo(7, -8.5); ctx.lineTo(11, -7); ctx.lineTo(11, 7); ctx.lineTo(7, 8.5);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-7, -8.5); ctx.lineTo(-11, -7); ctx.lineTo(-11, 7); ctx.lineTo(-7, 8.5);
+    ctx.closePath(); ctx.fill();
+    // Glass shine: one pale diagonal streak on the windshield.
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(8, 6); ctx.lineTo(10, -5); ctx.stroke();
+    // Roof panel (light grey, a separate part from hood and doors).
+    rr(-7, -9, 14, 18, 3);
+    ctx.fillStyle = '#d3d4de';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.30)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // --- Mirrors: small nubs sticking out at the front of the cabin. ---
+    ctx.fillStyle = '#14141c';
+    ctx.fillRect(3, -15.5, 4, 2.5);
+    ctx.fillRect(3, 13, 4, 2.5);
+    // --- Wheels: real tyres (rounded, protruding) with a lighter hub. ---
+    const wheel = (x, y) => {
+      rr(x, y, 11, 4.5, 2);
+      ctx.fillStyle = '#111';
+      ctx.fill();
+      rr(x + 3.5, y + 1.25, 4, 2, 1);
+      ctx.fillStyle = '#8a8f98';
+      ctx.fill();
+    };
+    wheel(-16, -16); wheel(7, -16); wheel(-16, 11.5); wheel(7, 11.5);
+    // --- Bumpers: thin chrome strips at nose and tail. ---
+    ctx.fillStyle = '#8a8f98';
+    rr(21, -5.5, 2, 11, 1); ctx.fill();
+    rr(-23, -5.5, 2, 11, 1); ctx.fill();
+    // --- Headlights (front corners, pale yellow) + taillights (rear). ---
+    // (Placed INSIDE the tapered nose/rear: at x~20 the body is only ~±6.5
+    // wide, so lamps at y ±(7..10.5) would float off the body.)
+    ctx.fillStyle = '#ffe9a8';
+    rr(18, -8.5, 3, 3.5, 1); ctx.fill();
+    rr(18, 5, 3, 3.5, 1); ctx.fill();
     ctx.fillStyle = '#c22a2a';
-    ctx.fillRect(-4, -13, 8, 26);
-    // Light bar flashing.
+    rr(-21.5, -5, 2.5, 3, 1); ctx.fill();
+    rr(-21.5, 2, 2.5, 3, 1); ctx.fill();
+    // --- Grille: dark centre strip on the nose with a lighter slat. ---
+    ctx.fillStyle = '#2e2e36';
+    ctx.fillRect(20.5, -3.5, 1.8, 7);
+    ctx.fillStyle = '#5a5a64';
+    ctx.fillRect(20.5, -0.3, 1.8, 0.6);
+    // --- Door seam (two segments OUTSIDE the roof panel) + handles. ---
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(0, -12.5, 1, 3.5);
+    ctx.fillRect(0, 9, 1, 3.5);
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(2, -10.5, 2, 1);
+    ctx.fillRect(2, 9.5, 2, 1);
+    // --- Light bar on the roof: dark housing + red/blue lenses, flashing. ---
     const on = Math.floor(performance.now() / 180) % 2 === 0;
+    rr(-4, -9.5, 8, 19, 2);
+    ctx.fillStyle = '#14141c';
+    ctx.fill();
+    rr(-3, -8.5, 6, 8, 1.5);
     ctx.fillStyle = on ? '#ff2a2a' : '#2a6aff';
-    ctx.fillRect(-6, -15, 12, 4);
+    ctx.fill();
+    rr(-3, 0.5, 6, 8, 1.5);
     ctx.fillStyle = on ? '#2a6aff' : '#ff2a2a';
-    ctx.fillRect(-6, 11, 12, 4);
+    ctx.fill();
   } else {
     ctx.fillStyle = car.def.color;
     ctx.fillRect(-22, -13, 44, 26);
@@ -403,12 +750,16 @@ export function drawCar(ctx, car) {
     ctx.fillRect(20, -11, 3, 5);
     ctx.fillRect(20, 6, 3, 5);
   }
-  // Wheels.
-  ctx.fillStyle = '#111';
-  ctx.fillRect(-15, -15, 10, 4);
-  ctx.fillRect(-15, 11, 10, 4);
-  ctx.fillRect(8, -15, 10, 4);
-  ctx.fillRect(8, 11, 10, 4);
+  // Wheels (regular cars only — police cars draw their own tyres with hubs
+  // inside the isPolice branch above; the old shared rects would paint over
+  // them).
+  if (!car.isPolice) {
+    ctx.fillStyle = '#111';
+    ctx.fillRect(-15, -15, 10, 4);
+    ctx.fillRect(-15, 11, 10, 4);
+    ctx.fillRect(8, -15, 10, 4);
+    ctx.fillRect(8, 11, 10, 4);
+  }
   if (car.brakeLight) {
     ctx.fillStyle = '#ff2a2a';
     ctx.fillRect(-24, -10, 3, 5);
@@ -422,45 +773,132 @@ export function drawCar(ctx, car) {
     ctx.fillRect(car.x - 20, car.y - 30, 40 * (car.cond / 100), 5);
   }
 }
-export function drawPerson(ctx, x, y, angle, color, isPlayer, aimAngle) {
+// A person, drawn BIG and unmistakable: a wide torso, shoulders, a head
+// facing the aim direction, and a long gun barrel when aiming. The player
+// is larger still, with a white ring and a LEO label, so on foot the player
+// can never be mistaken for a car.
+export function drawPerson(ctx, x, y, angle, color, isPlayer, aimAngle, walkPhase = 0) {
+  // Top-down HUMAN, drawn as separate parts with visible gaps — never one
+  // solid oval. (Mana, 19 Nov: the old big gold ellipse + tiny head read as
+  // a TURTLE: oval = shell, small head = turtle head.) So: narrow torso
+  // (rounded rect, NOT an ellipse), a BIG head clearly out in front, arms
+  // and legs as separate capsules with daylight between them and the torso,
+  // dark trousers, jacket details so the torso reads as CLOTHING.
+  // Rotated frame: +x = facing direction, y = lateral.
+  const R = isPlayer ? 17 : 12;
   ctx.save();
   ctx.translate(x, y);
-  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  // Shadow — small and soft, never wider than the figure.
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
   ctx.beginPath();
-  ctx.ellipse(2, 3, 11, 9, 0, 0, TAU);
+  ctx.ellipse(2, 4, R * 0.95, R * 0.75, 0, 0, TAU);
   ctx.fill();
   ctx.rotate(angle);
-  // Gun when aiming.
-  if (aimAngle !== undefined) {
-    ctx.strokeStyle = '#222';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(8, 0);
-    ctx.lineTo(20, 0);
-    ctx.stroke();
-  }
-  ctx.fillStyle = color;
+  // --- Legs: two dark trouser capsules BEHIND the torso, clearly separated
+  // by a gap in the middle, swinging alternately while walking. They stick
+  // out well past the torso so the figure has visible legs, not a shell.
+  const swing = Math.sin(walkPhase) * R * 0.30;
+  ctx.fillStyle = '#23232e';
   ctx.beginPath();
-  ctx.arc(0, 0, 10, 0, TAU);
+  ctx.ellipse(-R * 0.95 + swing, -R * 0.38, R * 0.45, R * 0.20, 0, 0, TAU);
+  ctx.ellipse(-R * 0.95 - swing, R * 0.38, R * 0.45, R * 0.20, 0, 0, TAU);
   ctx.fill();
+  // Shoe tips, slightly lighter than the trousers.
+  ctx.fillStyle = '#3d3d4a';
+  ctx.beginPath();
+  ctx.ellipse(-R * 1.36 + swing, -R * 0.38, R * 0.15, R * 0.20, 0, 0, TAU);
+  ctx.ellipse(-R * 1.36 - swing, R * 0.38, R * 0.15, R * 0.20, 0, 0, TAU);
+  ctx.fill();
+  // --- Torso: a NARROW rounded rect (flat sides, clearly longer than wide),
+  // shirt colour. Deliberately NOT an ellipse and NOT as wide as the old
+  // blob — the old ellipse + same-colour shoulders merged into one oval.
+  ctx.fillStyle = color;
+  rr(ctx, -R * 0.55, -R * 0.48, R * 1.10, R * 0.96, R * 0.30);
+  ctx.fill();
+  // Jacket details so the torso reads as CLOTHING, not a shell: zipper line
+  // down the middle, chest band near the shoulders, belt at the waist.
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(-R * 0.45, -R * 0.03, R * 0.85, R * 0.06);
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.fillRect(R * 0.28, -R * 0.48, R * 0.14, R * 0.96);
+  ctx.fillRect(-R * 0.55, -R * 0.48, R * 0.10, R * 0.96);
+  // Light shirt V at the chest (front of the jacket).
+  ctx.fillStyle = 'rgba(232,232,232,0.85)';
+  ctx.beginPath();
+  ctx.moveTo(R * 0.55, -R * 0.16);
+  ctx.lineTo(R * 0.55, R * 0.16);
+  ctx.lineTo(R * 0.30, 0);
+  ctx.closePath();
+  ctx.fill();
+  // --- Arms: two thin capsules at the SIDES, clearly separated from the
+  // torso by a visible gap (road shows through). Sleeves a shade darker
+  // than the torso so they read as separate limbs, not part of the blob.
+  for (const side of [-1, 1]) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.ellipse(R * 0.05, side * R * 0.75, R * 0.55, R * 0.16, 0, 0, TAU);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath();
+    ctx.ellipse(R * 0.05, side * R * 0.75, R * 0.55, R * 0.16, 0, 0, TAU);
+    ctx.fill();
+  }
+  // --- Gun, held BESIDE the head (offset so it never crosses the face):
+  // dark barrel + yellow muzzle tip. The forward arm reaches from the
+  // shoulder to the grip, and the HAND (skin) circles the grip — the
+  // pistol is visibly HELD, not floating out of the middle of a circle.
+  if (aimAngle !== undefined) {
+    ctx.strokeStyle = '#14141c';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(R * 0.55, R * 0.62);
+    ctx.lineTo(R + 20, R * 0.62);
+    ctx.stroke();
+    ctx.fillStyle = '#ffd24b';
+    ctx.fillRect(R + 18, R * 0.62 - 2, 5, 4);
+    // Forward arm: shoulder -> grip.
+    ctx.strokeStyle = color;
+    ctx.lineWidth = R * 0.28;
+    ctx.beginPath();
+    ctx.moveTo(R * 0.25, R * 0.70);
+    ctx.lineTo(R * 0.75, R * 0.62);
+    ctx.stroke();
+    // Hand gripping the pistol.
+    ctx.fillStyle = '#e8b98a';
+    ctx.beginPath();
+    ctx.arc(R * 0.75, R * 0.62, R * 0.19, 0, TAU);
+    ctx.fill();
+  }
+  // --- Head: BIG and clearly separate — a skin circle pushed forward so
+  // most of it sticks out beyond the torso. A turtle's head is tiny next
+  // to its shell; a person's head is big and obvious.
   ctx.fillStyle = '#e8b98a';
   ctx.beginPath();
-  ctx.arc(4, 0, 5.5, 0, TAU);
+  ctx.arc(R * 1.02, 0, R * 0.55, 0, TAU);
   ctx.fill();
-  ctx.fillStyle = '#222';
+  // Hair cap on the back of the head.
+  ctx.fillStyle = '#2b2118';
   ctx.beginPath();
-  ctx.arc(6, -2, 1.6, 0, TAU);
+  ctx.arc(R * 0.80, 0, R * 0.55, Math.PI * 0.5, Math.PI * 1.5);
   ctx.fill();
+  // Eyes, looking where the person faces.
+  ctx.fillStyle = '#14141c';
   ctx.beginPath();
-  ctx.arc(6, 2, 1.6, 0, TAU);
+  ctx.arc(R * 1.28, -R * 0.18, R * 0.10, 0, TAU);
+  ctx.arc(R * 1.28, R * 0.18, R * 0.10, 0, TAU);
   ctx.fill();
   ctx.restore();
   if (isPlayer) {
+    // White ring + name label: this is a person on foot, never a car.
     ctx.strokeStyle = '#fff';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(x, y, 14, 0, TAU);
+    ctx.arc(x, y, R + 7, 0, TAU);
     ctx.stroke();
+    ctx.fillStyle = '#ffd24b';
+    ctx.font = '900 12px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('LEO', x, y - R - 14);
   }
 }
 export function drawEnemy(ctx, e) {
@@ -479,7 +917,7 @@ export function drawEnemy(ctx, e) {
     }
     return;
   }
-  drawPerson(ctx, e.x, e.y, e.angle, e.color, false, e.angle);
+  drawPerson(ctx, e.x, e.y, e.angle, e.color, false, e.angle, e.walkPhase || 0);
   // Red triangle marker above the head.
   const bob = Math.sin(performance.now() / 200) * 3;
   ctx.fillStyle = '#ff2a2a';
